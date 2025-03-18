@@ -1,24 +1,36 @@
 import pygame
 from settings import *
+from powerups import PowerUp
 
 class Player(pygame.sprite.Sprite):
-    def __init__(self, x, y, bullet_group):
+    """Clase que representa al jugador."""
+
+    def __init__(self, x, y, bullet_group, powerup_group, shoot_sound, damage_sound):
         super().__init__()
 
-        self.original_image = pygame.image.load('assets/player_ship.png').convert_alpha()  # Cargar la imagen original
+        # Cargar la imagen del jugador
+        self.original_image = pygame.image.load('assets/player_ship.png').convert_alpha()
         self.image = self.original_image
-        self.image.set_colorkey((0, 0, 0))  # Eliminar el color de fondo (si es necesario)
+        self.image.set_colorkey((0, 0, 0))  # Define el color transparente
 
-        self.rect = self.image.get_rect(center=(x, y))
+        self.rect = self.image.get_rect(center=(x, y))  # Establece la posición inicial
 
+        # Atributos del jugador
         self.speed = 5
         self.health = 100
         self.level = 1
-        self.score = 0  # Puntuación
+        self.score = 0
 
+        # Grupos para las balas y power-ups
         self.bullet_group = bullet_group
+        self.powerup_group = powerup_group
         self.shoot_cooldown = 0
 
+        # Sonidos
+        self.shoot_sound = shoot_sound
+        self.damage_sound = damage_sound
+
+        # Power-ups del jugador
         self.powerups = {
             "speed": False,
             "shield": False,
@@ -26,20 +38,22 @@ class Player(pygame.sprite.Sprite):
         }
         self.powerup_timers = {}
 
-        self.explosion_frames = self.load_explosion_frames()  # Cargar frames de explosión
+        # Animación de explosión
+        self.explosion_frames = self.load_explosion_frames()
         self.explosion_frame_index = 0
         self.is_exploding = False
 
     def load_explosion_frames(self):
-        # Cargar las imágenes para la animación de explosión
+        """Carga los fotogramas de la animación de explosión."""
         frames = []
-        for i in range(1, 6):  # Supón que tienes 5 imágenes de explosión
+        for i in range(1, 6):
             frames.append(pygame.image.load(f'assets/FB00_nyknck/FB00_nyknck/FB00{i}.png').convert_alpha())
         return frames
 
     def move(self, keys):
-        if self.is_exploding:  # No permite mover al jugador si está explotando
-            return
+        """Mueve al jugador según las teclas presionadas."""
+        if self.is_exploding:
+            return  # No se mueve durante la explosión
 
         if keys[pygame.K_LEFT] and self.rect.left > 0:
             self.rect.x -= self.speed
@@ -53,45 +67,64 @@ class Player(pygame.sprite.Sprite):
         if keys[pygame.K_DOWN] and self.rect.bottom < HEIGHT:
             self.rect.y += self.speed
 
-    def update_image(self):
-        # No hacemos ninguna rotación, ya que la imagen siempre debe ir hacia arriba
-        self.rect = self.image.get_rect(center=self.rect.center)
-
     def shoot(self):
-        """Dispara balas si el cooldown lo permite"""
+        """Dispara una bala si no está en cooldown."""
         if self.shoot_cooldown == 0:
-            bullet = PlayerBullet(self.rect.centerx, self.rect.top)
-            self.bullet_group.add(bullet)
-            self.shoot_cooldown = 15
+            bullet = PlayerBullet(self.rect.centerx, self.rect.top)  # Crea la bala
+            self.bullet_group.add(bullet)  # La añade al grupo de balas
+            self.shoot_sound.play()  # Reproduce el sonido de disparo
+            self.shoot_cooldown = 10 if self.powerups["damage"] else 15  # Reducir el tiempo de cooldown si el powerup de daño está activo
 
     def take_damage(self, amount):
-        """Reduce la vida del jugador"""
+        """Reduce la salud del jugador si no tiene un escudo activo."""
         if not self.powerups["shield"]:
             self.health -= amount
+            self.damage_sound.play()  # Reproduce el sonido de daño
         if self.health <= 0:
-            self.explode()
+            self.explode()  # Inicia la animación de explosión
 
     def explode(self):
-        """Genera una explosión cuando el jugador muere"""
-        if not self.is_exploding:  # Asegurarse de que no se reinicie la animación
+        """Inicia la animación de explosión cuando la salud llega a 0."""
+        if not self.is_exploding:
             self.is_exploding = True
             self.explosion_frame_index = 0
 
+    def activate_powerup(self, powerup_type, duration=5000):
+        """Activa un power-up con una duración limitada."""
+        self.powerups[powerup_type] = True
+        self.powerup_timers[powerup_type] = pygame.time.get_ticks() + duration
+
+        # Efectos de cada power-up
+        if powerup_type == "speed":
+            self.speed = 8  # Aumenta la velocidad
+        elif powerup_type == "shield":
+            self.powerups["shield"] = True  # Activa el escudo
+        elif powerup_type == "damage":
+            self.shoot_cooldown = 5  # Dispara más rápido
+
     def update(self):
-        """Actualiza cooldown de disparo y power-ups"""
+        """Actualiza la lógica del jugador, incluyendo el manejo de power-ups y la explosión."""
         if self.shoot_cooldown > 0:
-            self.shoot_cooldown -= 1
+            self.shoot_cooldown -= 1  # Reducir el cooldown del disparo
 
         current_time = pygame.time.get_ticks()
         for powerup, end_time in list(self.powerup_timers.items()):
-            if current_time > end_time:
-                self.powerups[powerup] = False
+            if current_time > end_time:  # Si el powerup ha expirado
+                self.powerups[powerup] = False  # Desactívalo
                 del self.powerup_timers[powerup]
 
+                # Restablecer valores después de que el powerup termine
                 if powerup == "speed":
                     self.speed = 5
+                elif powerup == "damage":
+                    self.shoot_cooldown = 15
 
-        # Actualizar la animación de explosión
+        # Detecta si el jugador colisiona con power-ups
+        powerup_hit = pygame.sprite.spritecollide(self, self.powerup_group, True)
+        for powerup in powerup_hit:
+            self.activate_powerup(powerup.powerup_type)
+
+        # Maneja la animación de explosión
         if self.is_exploding:
             if self.explosion_frame_index < len(self.explosion_frames):
                 self.image = self.explosion_frames[self.explosion_frame_index]
@@ -101,41 +134,25 @@ class Player(pygame.sprite.Sprite):
                 self.kill()  # Elimina al jugador después de la animación de explosión
 
     def draw(self, screen):
-        """Dibujar al jugador en pantalla"""
+        """Dibuja la imagen del jugador en la pantalla."""
         screen.blit(self.image, self.rect)
 
 
 class PlayerBullet(pygame.sprite.Sprite):
+    """Clase para las balas disparadas por el jugador."""
+
     def __init__(self, x, y):
         super().__init__()
 
-        # Cargar la imagen y girarla 90° si es necesario
         self.image = pygame.image.load("assets/FB00_nyknck/FB00_nyknck/FB001.png").convert_alpha()
-        self.image = pygame.transform.rotate(self.image, 90)  # Gira la imagen hacia arriba
+        self.image = pygame.transform.rotate(self.image, 90)  # Rota la bala para que apunte hacia arriba
 
         self.rect = self.image.get_rect(center=(x, y))
-        self.speed = -8  # Movimiento hacia arriba
+        self.speed = -8  # Velocidad de la bala hacia arriba
 
     def update(self):
-        """Mueve la bala hacia arriba y la elimina si sale de la pantalla"""
+        """Actualiza la posición de la bala y la elimina si sale de la pantalla."""
         self.rect.y += self.speed
-        if self.rect.bottom < 0:
-            self.kill()  # Elimina la bala si sale de la pantalla
-
-
-# Función para mostrar el estado final cuando el jugador muere
-def show_game_over(screen, score, level):
-    font = pygame.font.SysFont('Arial', 48)  # Fuente para el texto
-    text = font.render(f'Puntuación: {score}   Nivel: {level}', True, (255, 255, 255))  # Texto de puntuación y nivel
-    text_rect = text.get_rect(center=(WIDTH // 2, HEIGHT // 2))  # Centrar el texto en la pantalla
-    screen.blit(text, text_rect)
-    pygame.display.flip()
-
-
-# Pausar el juego cuando el jugador muera
-def pause_game():
-    return True
-
-
-
+        if self.rect.bottom < 0:  # Si la bala sale de la pantalla
+            self.kill()  # La elimina
 
